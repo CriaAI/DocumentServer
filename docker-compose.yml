@@ -1,0 +1,42 @@
+version: "3.8"
+
+services:
+  documentserver:
+    build:
+      context: .
+      dockerfile: Dockerfile.production
+    container_name: criaai-documentserver
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      # ── JWT (REQUIRED - change in .env) ──
+      - JWT_ENABLED=${JWT_ENABLED:-true}
+      - JWT_SECRET=${JWT_SECRET:?Set JWT_SECRET in .env}
+      - JWT_HEADER=${JWT_HEADER:-Authorization}
+      - JWT_IN_BODY=${JWT_IN_BODY:-true}
+      # ── SSL / Let's Encrypt ──
+      # Option 1: Let's Encrypt (automatic)
+      - LETS_ENCRYPT_DOMAIN=${DOMAIN:-}
+      - LETS_ENCRYPT_MAIL=${CERT_EMAIL:-}
+      # Option 2: Custom certs - mount to /var/www/onlyoffice/Data/certs/
+      #   onlyoffice.crt and onlyoffice.key
+    volumes:
+      # Persist all data across container restarts
+      - ds_data:/var/www/onlyoffice/Data
+      - ds_lib:/var/lib/onlyoffice
+      - ds_db:/var/lib/postgresql
+      - ds_rabbitmq:/var/lib/rabbitmq
+      - ds_redis:/var/lib/redis
+      - ds_logs:/var/log/onlyoffice
+      - ds_fonts:/usr/share/fonts/custom
+
+volumes:
+  ds_data:
+  ds_lib:
+  ds_db:
+  ds_rabbitmq:
+  ds_redis:
+  ds_logs:
+  ds_fonts:
