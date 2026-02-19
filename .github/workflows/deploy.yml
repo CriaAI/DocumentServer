@@ -57,9 +57,7 @@ jobs:
   deploy:
     needs: build-and-push
     runs-on: ubuntu-latest
-    environment:
-      name: production
-      url: https://${{ secrets.DOMAIN }}
+    environment: production
 
     steps:
       - uses: actions/checkout@v4
