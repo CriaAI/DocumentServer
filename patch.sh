@@ -60,4 +60,21 @@ else
 fi
 
 echo ""
+echo "=== Patch 3: Remove connection limit (server-side) ==="
+
+# The docservice binary is compiled with `pkg` and uses /snapshot/server/...
+# as its virtual filesystem. Files placed on the real filesystem at the same
+# path take precedence over the bundled versions.
+
+SNAPSHOT_DIR="/snapshot/server/Common/sources"
+mkdir -p "$SNAPSHOT_DIR"
+
+# Copy the original source files from our repo as the base
+cp /tmp/license-patch/constants.js "$SNAPSHOT_DIR/constants.js"
+cp /tmp/license-patch/license.js "$SNAPSHOT_DIR/license.js"
+
+echo "Placed patched license.js and constants.js at $SNAPSHOT_DIR"
+ls -la "$SNAPSHOT_DIR"
+
+echo ""
 echo "=== All patches applied successfully ==="
