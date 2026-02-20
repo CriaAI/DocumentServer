@@ -1,4 +1,4 @@
-name: Deploy to EC2
+name: Deploy to ECS
 
 on:
   push:
@@ -9,135 +9,102 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  ECR_REPOSITORY: criaai/documentserver
+  ECS_CLUSTER: criaai
+  ECS_SERVICE: documentserver
+  TASK_DEFINITION: ecs/task-definition.json
 
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
     permissions:
+      id-token: write
       contents: read
-      packages: write
     outputs:
-      image_tag: ${{ steps.meta.outputs.version }}
+      image: ${{ steps.build.outputs.image }}
 
     steps:
       - uses: actions/checkout@v4
 
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and push to ECR
+        id: build
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          IMAGE="$REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+          IMAGE_LATEST="$REGISTRY/$ECR_REPOSITORY:latest"
 
-      - name: Extract metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          tags: |
-            type=sha,prefix=
-            type=raw,value=latest
+          docker buildx build \
+            --file Dockerfile.production \
+            --tag "$IMAGE" \
+            --tag "$IMAGE_LATEST" \
+            --push \
+            --cache-from type=gha \
+            --cache-to type=gha,mode=max \
+            .
 
-      - name: Build and push
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: Dockerfile.production
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
 
   deploy:
     needs: build-and-push
     runs-on: ubuntu-latest
     environment: production
+    permissions:
+      id-token: write
+      contents: read
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Deploy to EC2
-        uses: appleboy/ssh-action@v1
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
         with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USER }}
-          key: ${{ secrets.EC2_SSH_KEY }}
-          script_stop: true
-          script: |
-            set -e
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
 
-            # ── Login to GHCR ──
-            echo "${{ secrets.GHCR_PAT }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+      - name: Render task definition
+        id: render
+        env:
+          IMAGE: ${{ needs.build-and-push.outputs.image }}
+        run: |
+          sed -e "s|\${ECR_IMAGE}|$IMAGE|g" \
+              -e "s|\${EXECUTION_ROLE_ARN}|${{ vars.ECS_EXECUTION_ROLE_ARN }}|g" \
+              -e "s|\${TASK_ROLE_ARN}|${{ vars.ECS_TASK_ROLE_ARN }}|g" \
+              -e "s|\${JWT_SECRET_ARN}|${{ secrets.JWT_SECRET_ARN }}|g" \
+              -e "s|\${EFS_ID}|${{ vars.EFS_ID }}|g" \
+              -e "s|\${AWS_REGION}|${{ env.AWS_REGION }}|g" \
+              ${{ env.TASK_DEFINITION }} > task-def-rendered.json
 
-            # ── Pull latest image ──
-            IMAGE="ghcr.io/${{ github.repository }}:latest"
-            docker pull "$IMAGE"
+          echo "task_def=task-def-rendered.json" >> "$GITHUB_OUTPUT"
 
-            # ── Stop existing container ──
-            docker stop criaai-documentserver 2>/dev/null || true
-            docker rm criaai-documentserver 2>/dev/null || true
-
-            # ── Run new container ──
-            docker run -d \
-              --name criaai-documentserver \
-              --restart unless-stopped \
-              -p 80:80 \
-              -p 443:443 \
-              -e JWT_ENABLED=true \
-              -e JWT_SECRET="${{ secrets.JWT_SECRET }}" \
-              -e JWT_HEADER=Authorization \
-              -e JWT_IN_BODY=true \
-              -e LETS_ENCRYPT_DOMAIN="${{ secrets.DOMAIN }}" \
-              -e LETS_ENCRYPT_MAIL="${{ secrets.CERT_EMAIL }}" \
-              -v ds_data:/var/www/onlyoffice/Data \
-              -v ds_lib:/var/lib/onlyoffice \
-              -v ds_db:/var/lib/postgresql \
-              -v ds_rabbitmq:/var/lib/rabbitmq \
-              -v ds_redis:/var/lib/redis \
-              -v ds_logs:/var/log/onlyoffice \
-              -v ds_fonts:/usr/share/fonts/custom \
-              "$IMAGE"
-
-            # ── Wait for healthy ──
-            echo "Waiting for DocumentServer to start..."
-            for i in $(seq 1 60); do
-              if curl -sf http://localhost/healthcheck > /dev/null 2>&1; then
-                echo "DocumentServer is healthy!"
-                exit 0
-              fi
-              sleep 10
-            done
-            echo "WARNING: Healthcheck not passing yet (may still be initializing)"
-
-      - name: Verify deployment
-        uses: appleboy/ssh-action@v1
+      - name: Register task definition
+        id: task-def
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
         with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USER }}
-          key: ${{ secrets.EC2_SSH_KEY }}
-          script: |
-            echo "=== Container status ==="
-            docker ps --filter name=criaai-documentserver --format "table {{.Status}}\t{{.Ports}}"
+          task-definition: ${{ steps.render.outputs.task_def }}
+          container-name: documentserver
+          image: ${{ needs.build-and-push.outputs.image }}
 
-            echo ""
-            echo "=== Disk usage ==="
-            df -h / | tail -1
-
-            echo ""
-            echo "=== Docker disk usage ==="
-            docker system df
-
-      - name: Cleanup old images
-        uses: appleboy/ssh-action@v1
+      - name: Deploy to ECS
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
         with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USER }}
-          key: ${{ secrets.EC2_SSH_KEY }}
-          script: |
-            docker image prune -af --filter "until=168h"
+          task-definition: ${{ steps.task-def.outputs.task-definition }}
+          service: ${{ env.ECS_SERVICE }}
+          cluster: ${{ env.ECS_CLUSTER }}
+          wait-for-service-stability: true
+          wait-for-minutes: 15
