@@ -14,8 +14,8 @@ RUN chmod +x /tmp/patch.sh && /tmp/patch.sh && rm -rf /tmp/patch.sh /tmp/createC
 # ── Environment defaults (override at runtime) ──
 # The base image already bundles PostgreSQL, Redis, RabbitMQ, Nginx,
 # and Supervisor internally. It also handles SSL/Let's Encrypt natively.
+# JWT_SECRET is injected at runtime via ECS Secrets Manager or -e flag.
 ENV JWT_ENABLED=true \
-    JWT_SECRET=changeme_in_production \
     JWT_HEADER=Authorization \
     JWT_IN_BODY=true
 
