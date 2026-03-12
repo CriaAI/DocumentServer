@@ -60,6 +60,15 @@ jobs:
           # Check createConnector patch
           docker exec ds-test grep -q 'createConnector' /var/www/onlyoffice/documentserver/web-apps/apps/api/documents/api.js.tpl
 
+          # Check onlyoffice.com URLs removed from web-apps JS/HTML
+          REMAINING=$(docker exec ds-test grep -rFl 'onlyoffice.com' /var/www/onlyoffice/documentserver/web-apps/ --include='*.js' --include='*.html' 2>/dev/null || true)
+          if [ -n "$REMAINING" ]; then
+            echo "WARNING: Residual onlyoffice.com references found:"
+            echo "$REMAINING"
+          else
+            echo "Verified: No onlyoffice.com references in web-apps"
+          fi
+
           echo "All patches verified"
 
       - name: Cleanup

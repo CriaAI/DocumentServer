@@ -1,15 +1,32 @@
-FROM onlyoffice/documentserver:latest
+FROM onlyoffice/documentserver:9.3.1
 
 # ── Metadata ──
 LABEL maintainer="CriaAI" \
       description="CriaAI DocumentServer - Production" \
       version="1.0.0"
 
+# ── Branding URL overrides (build-time) ──
+# Set these via --build-arg or in CI/CD pipeline variables.
+# Empty values (default) blank out OnlyOffice URLs in compiled assets.
+ARG BRAND_SUPPORT_URL=""
+ARG BRAND_SUPPORT_EMAIL=""
+ARG BRAND_SALES_EMAIL=""
+ARG BRAND_PUBLISHER_URL=""
+ARG BRAND_HELP_URL=""
+ARG BRAND_FEEDBACK_URL=""
+ARG BRAND_API_CALLBACK_URL=""
+ARG BRAND_PLUGIN_URL=""
+ARG BRAND_PLUGIN_MACROS_URL=""
+ARG BRAND_PUBLISHER_NAME="CriaAI"
+ARG BRAND_PUBLISHER_ADDRESS=""
+ARG BRAND_PUBLISHER_PHONE=""
+
 # ── Apply custom patches ──
 COPY patch.sh /tmp/patch.sh
 COPY createConnector.js /tmp/createConnector.js
 COPY license-patch/ /tmp/license-patch/
-RUN chmod +x /tmp/patch.sh && /tmp/patch.sh && rm -rf /tmp/patch.sh /tmp/createConnector.js /tmp/license-patch
+COPY logo.png /tmp/logo.png
+RUN chmod +x /tmp/patch.sh && /tmp/patch.sh && rm -rf /tmp/patch.sh /tmp/createConnector.js /tmp/license-patch /tmp/logo.png
 
 # ── Environment defaults (override at runtime) ──
 # The base image already bundles PostgreSQL, Redis, RabbitMQ, Nginx,
