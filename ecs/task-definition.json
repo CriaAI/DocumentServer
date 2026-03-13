@@ -1,0 +1,97 @@
+{
+  "family": "criaai-documentserver",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "2048",
+  "memory": "4096",
+  "executionRoleArn": "${EXECUTION_ROLE_ARN}",
+  "taskRoleArn": "${TASK_ROLE_ARN}",
+  "containerDefinitions": [
+    {
+      "name": "documentserver",
+      "image": "${ECR_IMAGE}",
+      "essential": true,
+      "portMappings": [
+        { "containerPort": 80, "protocol": "tcp" }
+      ],
+      "environment": [
+        { "name": "JWT_ENABLED", "value": "true" },
+        { "name": "JWT_HEADER", "value": "Authorization" },
+        { "name": "JWT_IN_BODY", "value": "true" }
+      ],
+      "secrets": [
+        {
+          "name": "JWT_SECRET",
+          "valueFrom": "${JWT_SECRET_ARN}"
+        }
+      ],
+      "mountPoints": [
+        { "sourceVolume": "ds-data", "containerPath": "/var/www/onlyoffice/Data" },
+        { "sourceVolume": "ds-lib", "containerPath": "/var/lib/onlyoffice" },
+        { "sourceVolume": "ds-db", "containerPath": "/var/lib/postgresql" },
+        { "sourceVolume": "ds-rabbitmq", "containerPath": "/var/lib/rabbitmq" },
+        { "sourceVolume": "ds-redis", "containerPath": "/var/lib/redis" },
+        { "sourceVolume": "ds-logs", "containerPath": "/var/log/onlyoffice" }
+      ],
+      "healthCheck": {
+        "command": ["CMD-SHELL", "curl -sf http://localhost/healthcheck || exit 1"],
+        "interval": 30,
+        "timeout": 10,
+        "retries": 3,
+        "startPeriod": 120
+      },
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/criaai-documentserver",
+          "awslogs-region": "${AWS_REGION}",
+          "awslogs-stream-prefix": "ds"
+        }
+      }
+    }
+  ],
+  "volumes": [
+    {
+      "name": "ds-data",
+      "efsVolumeConfiguration": {
+        "fileSystemId": "${EFS_ID}",
+        "rootDirectory": "/documentserver/data"
+      }
+    },
+    {
+      "name": "ds-lib",
+      "efsVolumeConfiguration": {
+        "fileSystemId": "${EFS_ID}",
+        "rootDirectory": "/documentserver/lib"
+      }
+    },
+    {
+      "name": "ds-db",
+      "efsVolumeConfiguration": {
+        "fileSystemId": "${EFS_ID}",
+        "rootDirectory": "/documentserver/postgresql"
+      }
+    },
+    {
+      "name": "ds-rabbitmq",
+      "efsVolumeConfiguration": {
+        "fileSystemId": "${EFS_ID}",
+        "rootDirectory": "/documentserver/rabbitmq"
+      }
+    },
+    {
+      "name": "ds-redis",
+      "efsVolumeConfiguration": {
+        "fileSystemId": "${EFS_ID}",
+        "rootDirectory": "/documentserver/redis"
+      }
+    },
+    {
+      "name": "ds-logs",
+      "efsVolumeConfiguration": {
+        "fileSystemId": "${EFS_ID}",
+        "rootDirectory": "/documentserver/logs"
+      }
+    }
+  ]
+}
